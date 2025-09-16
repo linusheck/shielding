@@ -79,7 +79,6 @@ class PessimisticShield(Shield):
             assert len(actions) == 1
             action = list(actions.keys())[0]
             prob = [x for x in actions[action].branch if x[1].id == state][0]
-            print(prob)
             self.path_prob = self.path_prob * prob[0]
         else:
             actions = self.model_info.model.get_choice(self.model_info.map_states(self.last_state)).transition
@@ -105,4 +104,61 @@ class PessimisticShield(Shield):
             "safety": self.incurred_safety,
             "pathprob": self.path_prob,
             "safety > bmax": self.incurred_safety > self.bmax,
+        }
+
+
+class PessimisticShield2(Shield):
+    def __init__(self, model_info: ModelInfo, nu: float):
+        super().__init__(model_info)
+        self.incurred_risk = 0.0
+        self.path_prob = 1.0
+        self.last_state = "init"
+        self.bmin = nu - self.model_info.vmin[0]
+        self.standard_shield = StandardShield(model_info)
+
+    def _qmax(self, state, distr):
+        qmax = 0.0
+        actions = self.model_info.model.get_choice(state).transition
+        for (actionprob, action) in distr:
+            branch = actions[self.model_info.map_actions(action)]
+            for (value, next_state) in branch:
+                qmax += actionprob * value * self.model_info.vmax[next_state.id]
+        return qmax
+
+    def correct(self, last_action, current_state, distribution: Distribution):
+        state = self.model_info.map_states(current_state)
+        if last_action is None:
+            # Reset shield
+            self.incurred_risk = 0.0
+            self.path_prob = 1.0
+            actions = self.model_info.model.get_choice(self.model_info.model.get_initial_state()).transition
+            assert len(actions) == 1
+            action = list(actions.keys())[0]
+            prob = [x for x in actions[action].branch if x[1].id == state][0]
+            self.path_prob = self.path_prob * prob[0]
+        else:
+            actions = self.model_info.model.get_choice(self.model_info.map_states(self.last_state)).transition
+            probs = actions[self.model_info.map_actions(last_action)]
+            prob = [x for x in probs.branch if x[1].id == state][0]
+            self.path_prob = self.path_prob * prob[0]
+
+
+        qmax = self._qmax(state, distribution)
+        print(current_state, qmax, self.model_info.vmin[state])
+        self.incurred_risk += self.path_prob * (qmax - self.model_info.vmin[state])
+
+        self.last_state = current_state
+
+        if self.incurred_risk <= self.bmin:
+            return distribution
+        else:
+            return self.standard_shield.correct(last_action, current_state, distribution)
+
+    def report_info(self):
+        return {
+            "shield": "pessimistic2",
+            "bmax": self.bmin,
+            "risk": self.incurred_risk,
+            "pathprob": self.path_prob,
+            "risk <= bmin": self.incurred_risk <= self.bmin,
         }

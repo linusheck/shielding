@@ -1,6 +1,7 @@
 from manim import *
 import random
 import numpy as np
+from stormvogel import EmptyAction
 
 # Optional theming, keep if available
 try:
@@ -10,7 +11,7 @@ except Exception:
         pass
 
 # Shielding/model imports
-from shielding.shield import sample_distribution, PessimisticShield, IdentityShield
+from shielding.shield import sample_distribution, PessimisticShield, IdentityShield, PessimisticShield2
 from shielding.models import blackjack
 
 # ------------- Utilities (unchanged) -------------
@@ -166,15 +167,13 @@ class EnvRunner:
         frame = self._maybe_render(render)
         if frame is not None:
             drawer.on_env_ready(frame)
+        
+        number_bust = 0
 
         for ep in range(episodes):
             # Gymnasium reset returns (obs, info)
             reset_out = self.env.reset()
-            if isinstance(reset_out, tuple) and len(reset_out) == 2:
-                state, _ = reset_out
-            else:
-                # Fallback for legacy API
-                state = reset_out
+            state, _ = reset_out
 
             drawer.on_episode_start(ep, state)
 
@@ -182,15 +181,15 @@ class EnvRunner:
             terminated = False
             truncated = False
 
+            last_action = None
+
             while not (terminated or truncated):
                 # Random 2-action distribution and shield correction
                 p = self.rng.random()
                 distr = [(p, self.actions[0]), (1 - p, self.actions[1])]
                 corrected_distr = self.shield.correct(last_action, state, distr)
                 # Choose action and step
-                print("Corrected distr", corrected_distr)
                 action = sample_distribution(corrected_distr)
-                print("Action", action)
                 step_out = self.env.step(action)
 
                 next_state, _, terminated, truncated, _ = step_out
@@ -215,6 +214,9 @@ class EnvRunner:
             # Terminal label
             end_text = self.shield.model_info.model.states[self.shield.model_info.map_states(state)].labels[0]
             drawer.on_episode_end(state, f"done at: {end_text}")
+            if end_text == "bust":
+                number_bust += 1
+        return number_bust
 
 # ------------- Manim Scene using the runner -------------
 
@@ -235,7 +237,8 @@ class ShieldingScene(Scene):
 # ------------- Optional: headless entry point -------------
 if __name__ == "__main__":
     model_info = blackjack()
-    shield = IdentityShield(model_info)
+    shield = PessimisticShield(model_info, 0.1)
     runner = EnvRunner(model_info.env, shield, actions=(0, 1))
     # Run headless logic (no Manim, no rendering)
-    runner.run(episodes=5, drawer=NullDrawer(), render=False)
+    number_bust = runner.run(episodes=1000, drawer=NullDrawer(), render=False)
+    print(number_bust)

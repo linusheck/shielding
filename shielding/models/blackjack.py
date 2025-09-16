@@ -88,14 +88,15 @@ def blackjack():
         
 
     tuples_to_states = {convert_state(blackjack.states[state].labels[0]): state for state in blackjack.states}
-    print(tuples_to_states)
+    actions = [blackjack.get_action_with_labels(frozenset(["stick"])), blackjack.get_action_with_labels(frozenset(["hit"]))]
+    print(actions)
 
     def map_states(full_state):
         if full_state[0] > 21:
             return tuples_to_states["bust"]
         return tuples_to_states[(full_state[0], full_state[2] == 1)]
     def map_actions(full_action):
-        return "stick" if full_action == 0 else "hit"
+        return actions[full_action]
     def map_actions_back(stormvogel_action):
         return 0 if "stick" in stormvogel_action.labels else 1
 

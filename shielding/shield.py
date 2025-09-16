@@ -25,6 +25,9 @@ class Shield:
     def correct(self, last_action: any, current_state: any, distribution: Distribution):
         """Correct a distribution."""
         raise NotImplementedError("Not implemented")
+    
+    def report_info(self):
+        return {}
 
 class IdentityShield(Shield):
     def __init__(self, model_info):
@@ -53,7 +56,7 @@ class PessimisticShield(Shield):
         super().__init__(model_info)
         self.incurred_safety = 0.0
         self.path_prob = 1.0
-        self.last_state = None
+        self.last_state = "init"
         self.bmax = self.model_info.vmax[0] - nu
         self.standard_shield = StandardShield(model_info)
 
@@ -61,30 +64,32 @@ class PessimisticShield(Shield):
         qmax = 0.0
         actions = self.model_info.model.get_choice(state).transition
         for (actionprob, action) in distr:
-            branch = [a for a in actions if self.model_info.map_actions(action) in a.labels][0]
-            for (value, next_state) in actions[branch]:
+            branch = actions[self.model_info.map_actions(action)]
+            for (value, next_state) in branch:
                 qmax += actionprob * value * self.model_info.vmax[next_state.id]
         return qmax
 
     def correct(self, last_action, current_state, distribution: Distribution):
         state = self.model_info.map_states(current_state)
         if last_action is None:
+            # Reset shield
             self.incurred_safety = 0.0
             self.path_prob = 1.0
+            actions = self.model_info.model.get_choice(self.model_info.model.get_initial_state()).transition
+            assert len(actions) == 1
+            action = list(actions.keys())[0]
+            prob = [x for x in actions[action].branch if x[1].id == state][0]
+            print(prob)
+            self.path_prob = self.path_prob * prob[0]
         else:
             actions = self.model_info.model.get_choice(self.model_info.map_states(self.last_state)).transition
-            action = self.model_info.map_actions(last_action)
-            probs = [actions[x] for x in actions if action in x.labels][0]
+            probs = actions[self.model_info.map_actions(last_action)]
             prob = [x for x in probs.branch if x[1].id == state][0]
             self.path_prob = self.path_prob * prob[0]
 
 
         qmax = self._qmax(state, distribution)
         self.incurred_safety += self.path_prob * (self.model_info.vmax[state] - qmax)
-
-        print("Diff", self.model_info.vmax[state] - qmax)
-        print("Path Prob", self.path_prob)
-        print("Incurred Safety", self.incurred_safety)
 
         self.last_state = current_state
 
@@ -93,3 +98,11 @@ class PessimisticShield(Shield):
         else:
             return self.standard_shield.correct(last_action, current_state, distribution)
 
+    def report_info(self):
+        return {
+            "shield": "pessimistic",
+            "bmax": self.bmax,
+            "safety": self.incurred_safety,
+            "pathprob": self.path_prob,
+            "safety > bmax": self.incurred_safety > self.bmax,
+        }

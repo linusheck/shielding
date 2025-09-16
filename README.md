@@ -1,5 +1,5 @@
 This is managed with `uv`. Run:
 
 ```
-uv run main.py
+uv run manim render main.py 
 ```

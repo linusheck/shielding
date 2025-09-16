@@ -95,7 +95,7 @@ def blackjack():
             return tuples_to_states["bust"]
         return tuples_to_states[(full_state[0], full_state[2] == 1)]
     def map_actions(full_action):
-        return stormvogel.Action(["stick"]) if full_action == 0 else stormvogel.Action(["hit"])
+        return "stick" if full_action == 0 else "hit"
     def map_actions_back(stormvogel_action):
         return 0 if "stick" in stormvogel_action.labels else 1
 

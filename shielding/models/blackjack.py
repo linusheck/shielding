@@ -100,4 +100,4 @@ def blackjack():
     def map_actions_back(stormvogel_action):
         return 0 if "stick" in stormvogel_action.labels else 1
 
-    return ModelInfo(env, blackjack, vmin, vmax, map_states, map_actions, map_actions_back)
+    return ModelInfo(env, blackjack, "bust", vmin, vmax, map_states, map_actions, map_actions_back)

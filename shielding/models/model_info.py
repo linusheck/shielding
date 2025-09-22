@@ -10,6 +10,7 @@ class ModelInfo:
 
     env: gymnasium.Env
     model: stormvogel.Model
+    bad_state: str
     vmin: list[float]
     vmax: list[float]
     map_states: callable

@@ -59,6 +59,7 @@ class PessimisticShield(Shield):
         self.last_state = "init"
         self.bmax = self.model_info.vmax[0] - nu
         self.standard_shield = StandardShield(model_info)
+        self.last_distr = None
 
     def _qmax(self, state, distr):
         qmax = 0.0
@@ -83,14 +84,18 @@ class PessimisticShield(Shield):
         else:
             actions = self.model_info.model.get_choice(self.model_info.map_states(self.last_state)).transition
             probs = actions[self.model_info.map_actions(last_action)]
-            prob = [x for x in probs.branch if x[1].id == state][0]
-            self.path_prob = self.path_prob * prob[0]
+            next_state = [x for x in probs.branch if x[1].id == state]
+            assert len(next_state) == 1, f"next state not found from {self.last_state} with {last_action} to {current_state} (your fragment is incorrect)"
+            prob = next_state[0]
+            last_action_prob = [p for p, a in self.last_distr if a == last_action][0]
+            self.path_prob = self.path_prob * prob[0] * last_action_prob
 
 
         qmax = self._qmax(state, distribution)
         self.incurred_safety += self.path_prob * (self.model_info.vmax[state] - qmax)
 
         self.last_state = current_state
+        self.last_distr = distribution
 
         if self.incurred_safety > self.bmax:
             return distribution
@@ -144,7 +149,6 @@ class PessimisticShield2(Shield):
 
 
         qmax = self._qmax(state, distribution)
-        print(current_state, qmax, self.model_info.vmin[state])
         self.incurred_risk += self.path_prob * (qmax - self.model_info.vmin[state])
 
         self.last_state = current_state

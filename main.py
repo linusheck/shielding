@@ -12,14 +12,14 @@ except Exception:
 
 # Shielding/model imports
 from shielding.shield import sample_distribution, PessimisticShield, IdentityShield, PessimisticShield2
-from shielding.models import blackjack
+from shielding.models import blackjack, cliffwalking
 
 # ------------- Utilities (unchanged) -------------
-def values_from_distribution(distr, actions=(0, 1)):
-    probs = {a: 0.0 for a in actions}
+def values_from_distribution(distr):
+    probs = {a: 0.0 for a in range(len(distr))}
     for p, a in distr:
         probs[a] = p
-    return [probs[a] for a in actions]
+    return [probs[a] for a in range(len(distr))]
 
 def format_dict(shield_info):
     return "\n".join(
@@ -30,9 +30,9 @@ def format_dict(shield_info):
 
 class DrawerProtocol:
     """Event-driven drawer interface. All methods are optional to implement."""
-    def on_env_ready(self, frame):  # called once after initial render
+    def on_env_ready(self, frame, num_actions):  # called once after initial render
         pass
-    def on_episode_start(self, episode_idx: int, state):
+    def on_episode_start(self, episode_idx: int, state, frame):
         pass
     def on_step(self, state, action, distr, corrected_distr, shield_info: dict, frame):
         pass
@@ -61,27 +61,27 @@ class ManimDrawer(DrawerProtocol):
         # Layout containers
         self.layout_group = None
 
-    def _build_layout(self, initial_frame: np.ndarray):
+    def _build_layout(self, initial_frame: np.ndarray, num_actions):
         # Left image
         self.img = ImageMobject(initial_frame)
-        self.img.height = 4
+        self.img.width = 6
 
         # Right charts
         self.chart_orig = BarChart(
-            values=[0.5, 0.5],
-            bar_names=["0", "1"],
+            values=[0.5 for _ in range(num_actions)],
+            bar_names=[str(i) for i in range(num_actions)],
             y_range=[0, 1, 0.2],
-            y_length=3,
-            x_length=3,
+            y_length=2,
+            x_length=2,
             x_axis_config={"font_size": 28},
             y_axis_config={"font_size": 24},
         )
         self.chart_corr = BarChart(
-            values=[0.5, 0.5],
-            bar_names=["0", "1"],
+            values=[0.5 for _ in range(num_actions)],
+            bar_names=[str(i) for i in range(num_actions)],
             y_range=[0, 1, 0.2],
-            y_length=3,
-            x_length=3,
+            y_length=2,
+            x_length=2,
             x_axis_config={"font_size": 28},
             y_axis_config={"font_size": 24},
         )
@@ -95,48 +95,59 @@ class ManimDrawer(DrawerProtocol):
         self.layout_group = Group(upper_row).arrange(DOWN)
         self.scene.add(self.layout_group, self.status, self.visited_text, self.shield_info_text)
 
-    def on_env_ready(self, frame):
+    def on_env_ready(self, frame, num_actions):
         # Build the initial layout once we have an RGB frame from env.render()
-        self._build_layout(frame)
+        self._build_layout(frame, num_actions)
 
-    def on_episode_start(self, episode_idx: int, state):
+    def on_episode_start(self, episode_idx: int, state, frame):
+        animations = []
         self.visited_states = [str(state)]
         new_status = Text(f"game {episode_idx}", font_size=30).to_corner(DOWN + LEFT)
-        self.scene.play(Transform(self.status, new_status), run_time=0.4)
+        animations.append(Transform(self.status, new_status))
 
         # Refresh visited states text
-        new_v = Text("\n".join(self.visited_states), font_size=20, font="IBM Plex Mono").to_edge(DOWN)
-        self.scene.play(ReplacementTransform(self.visited_text, new_v), run_time=0.2)
+        new_v = Text("\n".join(self.visited_states[-4:]), font_size=20, font="IBM Plex Mono").to_edge(DOWN)
+        animations.append(ReplacementTransform(self.visited_text, new_v))
         self.visited_text = new_v
 
-    def on_step(self, state, action, distr, corrected_distr, shield_info: dict, frame):
         # Update image if a new frame is provided
         if frame is not None:
             new_img = ImageMobject(frame)
             new_img.height = self.img.height
             new_img.move_to(self.img)
-            self.scene.play(ReplacementTransform(self.img, new_img), run_time=0.2)
+            animations.append(ReplacementTransform(self.img, new_img))
             self.img = new_img
 
+        self.scene.play(*animations, run_time=0.1)
+
+    def on_step(self, state, action, distr, corrected_distr, shield_info: dict, frame):
+        animations = []
         # Update charts
         v_orig = values_from_distribution(distr)
         v_corr = values_from_distribution(corrected_distr)
-        self.scene.play(
-            self.chart_orig.animate.change_bar_values(v_orig),
-            self.chart_corr.animate.change_bar_values(v_corr),
-            run_time=0.3,
-        )
+        animations.append(self.chart_orig.animate.change_bar_values(v_orig))
+        animations.append(self.chart_corr.animate.change_bar_values(v_corr))
 
         # Update shield info
         new_info = Text(format_dict(shield_info), font_size=20, font="IBM Plex Mono").to_corner(DOWN + RIGHT)
-        self.scene.play(ReplacementTransform(self.shield_info_text, new_info), run_time=0.2)
+        animations.append(ReplacementTransform(self.shield_info_text, new_info))
         self.shield_info_text = new_info
 
         # Update visited states text
         self.visited_states.append(f"{action} -> {state}")
-        new_v = Text("\n".join(self.visited_states), font_size=20, font="IBM Plex Mono").to_edge(DOWN)
-        self.scene.play(ReplacementTransform(self.visited_text, new_v), run_time=0.2)
+        new_v = Text("\n".join(self.visited_states[-4:]), font_size=20, font="IBM Plex Mono").to_edge(DOWN)
+        animations.append(ReplacementTransform(self.visited_text, new_v))
         self.visited_text = new_v
+
+        # Update image if a new frame is provided
+        if frame is not None:
+            new_img = ImageMobject(frame)
+            new_img.height = self.img.height
+            new_img.move_to(self.img)
+            animations.append(ReplacementTransform(self.img, new_img))
+            self.img = new_img
+
+        self.scene.play(*animations, run_time=0.1)
 
     def on_episode_end(self, state, end_text: str):
         end_status = Text(end_text, font_size=30).to_corner(DOWN + LEFT)
@@ -162,20 +173,18 @@ class EnvRunner:
             frame = None
         return frame
 
-    def run(self, episodes: int, drawer: DrawerProtocol, render: bool = True):
-        self.env.reset()
-        frame = self._maybe_render(render)
-        if frame is not None:
-            drawer.on_env_ready(frame)
-        
-        number_bust = 0
+    def run(self, episodes: int, drawer: DrawerProtocol, render: bool = True, max_steps: int = 50):
+        number_bad = 0
 
         for ep in range(episodes):
             # Gymnasium reset returns (obs, info)
             reset_out = self.env.reset()
             state, _ = reset_out
 
-            drawer.on_episode_start(ep, state)
+            frame = self._maybe_render(render)
+            if ep == 0:
+                drawer.on_env_ready(frame, len(self.actions))
+            drawer.on_episode_start(ep, state, frame)
 
             last_action = None
             terminated = False
@@ -183,10 +192,12 @@ class EnvRunner:
 
             last_action = None
 
+            step_count = 0
             while not (terminated or truncated):
-                # Random 2-action distribution and shield correction
-                p = self.rng.random()
-                distr = [(p, self.actions[0]), (1 - p, self.actions[1])]
+                # Random distribution over all actions and shield correction
+                probs = [self.rng.random() for _ in self.actions]
+                total = sum(probs)
+                distr = [(p / total, a) for p, a in zip(probs, self.actions)]
                 corrected_distr = self.shield.correct(last_action, state, distr)
                 # Choose action and step
                 action = sample_distribution(corrected_distr)
@@ -210,35 +221,40 @@ class EnvRunner:
                 # Advance loop
                 last_action = action
                 state = next_state
+                terminated = terminated or self.shield.model_info.bad_state in self.shield.model_info.model.states[self.shield.model_info.map_states(state)].labels
+                if max_steps is not None:
+                    terminated = terminated or step_count >= max_steps
+                step_count += 1
+
 
             # Terminal label
             end_text = self.shield.model_info.model.states[self.shield.model_info.map_states(state)].labels[0]
             drawer.on_episode_end(state, f"done at: {end_text}")
-            if end_text == "bust":
-                number_bust += 1
-        return number_bust
+            if end_text == self.shield.model_info.bad_state:
+                number_bad += 1
+        return number_bad
 
 # ------------- Manim Scene using the runner -------------
 
 class ShieldingScene(Scene):
     def construct(self):
         # Initialize model and shield
-        model_info = blackjack()
+        model_info = cliffwalking()
         shield = PessimisticShield(model_info, 0.5)
         # shield = IdentityShield(model_info)
 
         # Build drawer and runner
         drawer = ManimDrawer(self, theme_name="Monokai Pro Light")
-        runner = EnvRunner(model_info.env, shield, actions=(0, 1))
+        runner = EnvRunner(model_info.env, shield, actions=[0, 1, 2, 3])
 
         # Run N episodes with drawing enabled
-        runner.run(episodes=10, drawer=drawer, render=True)
+        runner.run(episodes=1, drawer=drawer, render=True, max_steps=None)
 
-# ------------- Optional: headless entry point -------------
 if __name__ == "__main__":
-    model_info = blackjack()
-    shield = PessimisticShield(model_info, 0.1)
-    runner = EnvRunner(model_info.env, shield, actions=(0, 1))
+    model_info = cliffwalking()
+    shield = PessimisticShield(model_info, 0.5)
+    runner = EnvRunner(model_info.env, shield, actions=[0, 1, 2, 3])
     # Run headless logic (no Manim, no rendering)
-    number_bust = runner.run(episodes=1000, drawer=NullDrawer(), render=False)
-    print(number_bust)
+    number_bad = runner.run(episodes=100, drawer=NullDrawer(), render=False, max_steps=None)
+    print(number_bad, "/", 100)
+

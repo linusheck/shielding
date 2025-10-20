@@ -166,3 +166,26 @@ class PessimisticShield2(Shield):
             "pathprob": self.path_prob,
             "risk <= bmin": self.incurred_risk <= self.bmin,
         }
+
+
+type Distribution = list[float]
+
+@dataclass
+class Node:
+    successors: "list[Node]"
+    predecessor: "Node"
+    distributions: list[Distribution]
+    state_in_mc: int
+
+class SelfConstructingShield(Shield):
+    # try with tree structure
+
+    def __init__(self, model_info):
+        super().__init__(model_info)
+
+        # assumption
+        initial_state = 0
+
+        # get vmin
+        self.initial_node = Node([], None, [], initial_state)
+

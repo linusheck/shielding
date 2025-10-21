@@ -11,7 +11,7 @@ except Exception:
         pass
 
 # Shielding/model imports
-from shielding.shield import sample_distribution, PessimisticShield, IdentityShield, PessimisticShield2, SelfConstructingShield
+from shielding.shield import sample_distribution, PessimisticShield, IdentityShield, PessimisticShield2, SelfConstructingShield, SelfConstructingShieldDistributions
 from shielding.models import blackjack, cliffwalking
 
 # ------------- Utilities (unchanged) -------------
@@ -226,6 +226,8 @@ class EnvRunner:
                     terminated = terminated or step_count >= max_steps
                 step_count += 1
 
+            # if ep % 1000 == 0:
+            #     print(f"Completed episode {ep}")
 
             # Terminal label
             end_text = self.shield.model_info.model.states[self.shield.model_info.map_states(state)].labels[0]
@@ -256,7 +258,13 @@ class ShieldingScene(Scene):
 
 if __name__ == "__main__":
     model_info = blackjack()
-    shield = SelfConstructingShield(model_info, 1)
+    number_of_episodes = 10000
+    shield = SelfConstructingShield(model_info, 0.05)
     runner = EnvRunner(model_info.env, shield, actions=[0, 1])
-    number_bad = runner.run(episodes=10000, drawer=NullDrawer(), render=False, max_steps=None)
-    print(number_bad, "/", 10000)
+    number_bad = runner.run(episodes=number_of_episodes, drawer=NullDrawer(), render=False, max_steps=None)
+
+    shield.back_propagate_values(shield.current_node)
+    print(shield.initial_node.value)
+    print(f"Number of tree nodes: {shield.initial_node.number_of_tree_nodes()}")
+    print(f"Number of blocked actions: {shield.blocked_actions}")
+    print(f"Number of bad episodes: {round(number_bad/number_of_episodes*100,2)}% ({number_bad}/{number_of_episodes})")

@@ -25,6 +25,9 @@ class Shield:
     def __init__(self, model_info: ModelInfo):
         self.model_info = model_info
 
+        # just for evaluation
+        self.blocked_actions = 0
+
     def correct(self, last_action: any, current_state: any, distribution: Distribution):
         """Correct a distribution."""
         raise NotImplementedError("Not implemented")
@@ -182,6 +185,12 @@ class Node:
     state_in_mc: int
     value: float
 
+    def number_of_tree_nodes(self) -> int:
+        count = 1
+        for succ in self.successors:
+            count += succ.number_of_tree_nodes()
+        return count
+
 class SelfConstructingShield(Shield):
     # try with tree structure
 
@@ -315,8 +324,105 @@ class SelfConstructingShield(Shield):
         self.back_propagate_values(self.current_node)
 
         if self.initial_node.value > self.nu:
+            self.blocked_actions += 1
             self.current_node.distributions.pop()
             return clamp_distribution(distribution, self.vmin_actions[current_state_index])
 
         return distribution
 
+
+# TODO think about nice implementation where you could easily parameterize the behaviour anywhere between the two version of the self-constructing shield
+class SelfConstructingShieldDistributions(SelfConstructingShield):
+    def __init__(self, model_info: ModelInfo, nu: float):
+        super().__init__(model_info, nu)
+
+        self.last_distribution_index = None
+
+    # this can be optimized probably?
+    def back_propagate_values(self, node: Node):
+        while node is not None:
+            # initial node
+            if node.predecessor is None:
+                val = 0.0
+                for state, transition_prob in self.initial_distr.items():
+                    succ_node = next((n for n in node.successors if n.state_in_mc == state), None)
+                    if succ_node is not None:
+                        val += transition_prob * succ_node.value
+                    else:
+                        val += transition_prob * self.model_info.vmin[state]
+                node.value = val
+            # every other node
+            else:
+                # compute value from successors
+                best_value = float('-inf')
+                # points of the convex set
+                all_distributions = self.vmin_actions_distributions[node.state_in_mc] + node.distributions
+                for distr_index, distr in enumerate(all_distributions):
+                    q_value = 0.0
+                    actions = self.model_info.model.get_choice(node.state_in_mc).transition
+                    for action_index, action_prob in enumerate(distr):
+                        if action_prob == 0:
+                            continue
+                        branch = actions[self.model_info.map_actions(action_index)]
+                        for (value, next_state) in branch:
+                            succ_node = next((n for n in node.successors if n.state_in_mc == next_state.id and n.last_played_action == distr_index), None)
+                            if succ_node is not None:
+                                q_value += action_prob * value * succ_node.value
+                            else:
+                                q_value += action_prob * value * self.model_info.vmin[next_state.id]
+                    if q_value > best_value:
+                        best_value = q_value
+                assert best_value != float('-inf')
+                node.value = best_value
+            node = node.predecessor
+
+    def correct(self, last_action, current_state, distribution: Distribution):
+
+        current_state_index = self.model_info.map_states(current_state)
+
+        if last_action is None:
+            # we are looking at a different trace now, so we need to update the values on the previous trace
+            if len(self.initial_node.successors) > 0:
+                self.back_propagate_values(self.current_node)
+            self.last_distribution_index = None
+            self.current_node = self.initial_node
+
+        # Change compared to parent class: last_played_action now stores the index of the played distribution
+        succ_node = next((n for n in self.current_node.successors if n.state_in_mc == current_state_index and n.last_played_action == self.last_distribution_index), None)
+        if succ_node is None:
+            assert self.last_distribution_index is None and len(self.vmin_actions_distributions[self.current_node.state_in_mc] + self.current_node.distributions) == 0 or self.last_distribution_index < len(self.vmin_actions_distributions[self.current_node.state_in_mc] + self.current_node.distributions)
+            self.current_node.successors.append(Node([], self.current_node, self.last_distribution_index, [], current_state_index, self.model_info.vmin[current_state_index]))
+        self.current_node = next(n for n in self.current_node.successors if n.state_in_mc == current_state_index and n.last_played_action == self.last_distribution_index)
+
+        full_distribution = [0.0 for _ in range(len(self.model_info.model.get_choice(current_state_index).transition))]
+        for prob, action in distribution:
+            full_distribution[action] = prob
+
+        output_distribution = distribution
+
+        # check if current distribution is inside the convex set
+        if self.point_in_convex_hull(self.current_node.distributions + self.vmin_actions_distributions[current_state_index], full_distribution):
+            output_distribution = distribution
+        else:
+            self.current_node.distributions.append(full_distribution)
+
+            self.back_propagate_values(self.current_node)
+
+            if self.initial_node.value > self.nu:
+                self.blocked_actions += 1
+                self.current_node.distributions.pop()
+                output_distribution = clamp_distribution(distribution, self.vmin_actions[current_state_index])
+
+        # Change compared to parent class: last_played_action now stores the index of the played distribution
+        full_output_distribution = [0.0 for _ in range(len(self.model_info.model.get_choice(current_state_index).transition))]
+        for prob, action in output_distribution:
+            full_output_distribution[action] = prob
+        if full_output_distribution in self.vmin_actions_distributions[current_state_index]:
+            self.last_distribution_index = self.vmin_actions_distributions[current_state_index].index(full_output_distribution)
+        elif full_output_distribution in self.current_node.distributions:
+            self.last_distribution_index = len(self.vmin_actions_distributions[current_state_index]) + self.current_node.distributions.index(full_output_distribution)
+        else:
+            self.current_node.distributions.append(full_output_distribution)
+            self.last_distribution_index = len(self.vmin_actions_distributions[current_state_index]) + len(self.current_node.distributions) - 1
+
+        return output_distribution

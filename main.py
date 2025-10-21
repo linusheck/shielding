@@ -254,11 +254,9 @@ class ShieldingScene(Scene):
         shield.back_propagate_values(shield.current_node)
         print(shield.initial_node)
 
-# if __name__ == "__main__":
-#     model_info = blackjack()
-#     shield = PessimisticShield(model_info, 0.5)
-#     runner = EnvRunner(model_info.env, shield, actions=[0, 1])
-#     # Run headless logic (no Manim, no rendering)
-#     number_bad = runner.run(episodes=10, drawer=NullDrawer(), render=False, max_steps=None)
-#     print(number_bad, "/", 10)
-
+if __name__ == "__main__":
+    model_info = blackjack()
+    shield = SelfConstructingShield(model_info, 1)
+    runner = EnvRunner(model_info.env, shield, actions=[0, 1])
+    number_bad = runner.run(episodes=10000, drawer=NullDrawer(), render=False, max_steps=None)
+    print(number_bad, "/", 10000)

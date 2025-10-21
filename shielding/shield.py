@@ -309,26 +309,28 @@ class SelfConstructingShield(Shield):
         succ_node = next((n for n in self.current_node.successors if n.state_in_mc == current_state_index and n.last_played_action == last_action), None)
         if succ_node is None:
             self.current_node.successors.append(Node([], self.current_node, last_action, [], current_state_index, self.model_info.vmin[current_state_index]))
-        self.current_node = next(n for n in self.current_node.successors if n.state_in_mc == current_state_index and n.last_played_action == last_action)
+            self.current_node = self.current_node.successors[-1]
+        else:
+            self.current_node = succ_node
 
         full_distribution = [0.0 for _ in range(len(self.model_info.model.get_choice(current_state_index).transition))]
         for prob, action in distribution:
             full_distribution[action] = prob
 
+        output_distribution = distribution
+
         # check if current distribution is inside the convex set
-        if self.point_in_convex_hull(self.current_node.distributions + self.vmin_actions_distributions[current_state_index], full_distribution):
-            return distribution
+        if not self.point_in_convex_hull(self.current_node.distributions + self.vmin_actions_distributions[current_state_index], full_distribution):
+            self.current_node.distributions.append(full_distribution)
 
-        self.current_node.distributions.append(full_distribution)
+            self.back_propagate_values(self.current_node)
 
-        self.back_propagate_values(self.current_node)
+            if self.initial_node.value > self.nu:
+                self.blocked_actions += 1
+                self.current_node.distributions.pop()
+                output_distribution = clamp_distribution(distribution, self.vmin_actions[current_state_index])
 
-        if self.initial_node.value > self.nu:
-            self.blocked_actions += 1
-            self.current_node.distributions.pop()
-            return clamp_distribution(distribution, self.vmin_actions[current_state_index])
-
-        return distribution
+        return output_distribution
 
 
 # TODO think about nice implementation where you could easily parameterize the behaviour anywhere between the two version of the self-constructing shield
@@ -390,9 +392,12 @@ class SelfConstructingShieldDistributions(SelfConstructingShield):
         # Change compared to parent class: last_played_action now stores the index of the played distribution
         succ_node = next((n for n in self.current_node.successors if n.state_in_mc == current_state_index and n.last_played_action == self.last_distribution_index), None)
         if succ_node is None:
-            assert self.last_distribution_index is None and len(self.vmin_actions_distributions[self.current_node.state_in_mc] + self.current_node.distributions) == 0 or self.last_distribution_index < len(self.vmin_actions_distributions[self.current_node.state_in_mc] + self.current_node.distributions)
+            all_dist = self.vmin_actions_distributions[self.current_node.state_in_mc] + self.current_node.distributions
+            assert self.last_distribution_index is None and len(all_dist) == 0 or self.last_distribution_index < len(all_dist)
             self.current_node.successors.append(Node([], self.current_node, self.last_distribution_index, [], current_state_index, self.model_info.vmin[current_state_index]))
-        self.current_node = next(n for n in self.current_node.successors if n.state_in_mc == current_state_index and n.last_played_action == self.last_distribution_index)
+            self.current_node = self.current_node.successors[-1]
+        else:
+            self.current_node = succ_node
 
         full_distribution = [0.0 for _ in range(len(self.model_info.model.get_choice(current_state_index).transition))]
         for prob, action in distribution:
@@ -401,9 +406,7 @@ class SelfConstructingShieldDistributions(SelfConstructingShield):
         output_distribution = distribution
 
         # check if current distribution is inside the convex set
-        if self.point_in_convex_hull(self.current_node.distributions + self.vmin_actions_distributions[current_state_index], full_distribution):
-            output_distribution = distribution
-        else:
+        if not self.point_in_convex_hull(self.current_node.distributions + self.vmin_actions_distributions[current_state_index], full_distribution):
             self.current_node.distributions.append(full_distribution)
 
             self.back_propagate_values(self.current_node)

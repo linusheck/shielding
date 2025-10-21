@@ -11,4 +11,6 @@ dependencies = [
     "manim-themes>=0.1.3",
     "stormpy>=1.11.1",
     "stormvogel>=0.9.7",
+    "numpy",
+    "scipy",
 ]

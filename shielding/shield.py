@@ -2,6 +2,9 @@ from dataclasses import dataclass
 from stormvogel import Model, Action, Choice, Branch, State
 from shielding.models.model_info import ModelInfo
 import random
+import numpy as np
+from scipy.spatial import ConvexHull
+from scipy.optimize import linprog
 
 type Distribution = list[tuple[float, Action]]
 def clamp_distribution(distribution: Distribution, allowed_actions: list[Action]) -> Distribution:
@@ -168,24 +171,152 @@ class PessimisticShield2(Shield):
         }
 
 
-type Distribution = list[float]
+type DistributionFull = list[float]
 
 @dataclass
 class Node:
     successors: "list[Node]"
     predecessor: "Node"
-    distributions: list[Distribution]
+    last_played_action: int
+    distributions: list[DistributionFull]
     state_in_mc: int
+    value: float
 
 class SelfConstructingShield(Shield):
     # try with tree structure
 
-    def __init__(self, model_info):
+    def __init__(self, model_info: ModelInfo, nu: float):
         super().__init__(model_info)
+        self.nu = nu
 
         # assumption
         initial_state = 0
 
         # get vmin
-        self.initial_node = Node([], None, [], initial_state)
+        self.initial_node = Node([], None, None, [], initial_state, self.model_info.vmin[initial_state])
+
+        self.current_node = self.initial_node
+
+        self.initial_distr = {}
+        self.initialize_init_distr()
+        self.vmin_actions_distributions = []
+        self.vmin_actions = []
+        self.initialize_vmin_actions()
+
+    # this is maybe not needed but I'm not used to working with stormvogel models :D
+    def initialize_init_distr(self):
+        actions = self.model_info.model.get_choice(0).transition
+        assert len(actions) == 1
+        action = list(actions.keys())[0]
+        for branch_prob, branch_state in actions[action].branch:
+            self.initial_distr[branch_state.id] = branch_prob
+
+    def initialize_vmin_actions(self):
+        for state in self.model_info.model.states:
+            actions = self.model_info.model.get_choice(state).transition
+            if len(actions) <= 1:
+                self.vmin_actions_distributions.append([])
+                self.vmin_actions.append([])
+                continue
+            vmin_actions_distributions = []
+            vmin_actions = []
+            for action in range(len(actions)):
+                branch = actions[self.model_info.map_actions(action)]
+                val = 0.0
+                for (value, next_state) in branch:
+                    val += value * self.model_info.vmin[next_state.id]
+                if val <= self.model_info.vmin[state]:
+                    vmin_actions_distributions.append([1.0 if a == action else 0.0 for a in range(len(actions))])
+                    vmin_actions.append(action)
+            self.vmin_actions_distributions.append(vmin_actions_distributions)
+            self.vmin_actions.append(vmin_actions)
+
+    # this can be optimized probably?
+    def back_propagate_values(self, node: Node):
+        while node is not None:
+            # initial node
+            if node.predecessor is None:
+                val = 0.0
+                for state, transition_prob in self.initial_distr.items():
+                    succ_node = next((n for n in node.successors if n.state_in_mc == state), None)
+                    if succ_node is not None:
+                        val += transition_prob * succ_node.value
+                    else:
+                        val += transition_prob * self.model_info.vmin[state]
+                node.value = val
+            # every other node
+            else:
+                # compute value from successors
+                best_value = float('-inf')
+                # points of the convex set
+                all_distributions = node.distributions + self.vmin_actions_distributions[node.state_in_mc]
+                for distr in all_distributions:
+                    q_value = 0.0
+                    actions = self.model_info.model.get_choice(node.state_in_mc).transition
+                    for action_index, action_prob in enumerate(distr):
+                        if action_prob == 0:
+                            continue
+                        branch = actions[self.model_info.map_actions(action_index)]
+                        for (value, next_state) in branch:
+                            succ_node = next((n for n in node.successors if n.state_in_mc == next_state.id and n.last_played_action == action_index), None)
+                            if succ_node is not None:
+                                q_value += action_prob * value * succ_node.value
+                            else:
+                                q_value += action_prob * value * self.model_info.vmin[next_state.id]
+                    if q_value > best_value:
+                        best_value = q_value
+                assert best_value != float('-inf')
+                node.value = best_value
+            node = node.predecessor
+
+    def point_in_convex_hull(self, hull_vertices, point, tolerance=1e-12):
+        vertices = np.array([tuple(v) for v in hull_vertices])
+        p = np.array(point)
+        # Use coordinates directly to check if point is in the convex hull (i.e. the point is linear combination of the basis vectors with non-negative coefficients summing to 1)
+        c = np.zeros(len(vertices))
+        A_eq = np.vstack([vertices.T, np.ones(len(vertices))])
+        b_eq = np.append(p, 1)
+        bounds = [(0, 1)] * len(vertices)
+        res = linprog(c, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method='highs')
+        # Check if the solution coefficients are all within bounds and sum to 1
+        if not (res.success and res.status == 0):
+            return False
+        if np.any(res.x < -tolerance) or np.any(res.x > 1 + tolerance):
+            return False
+        if not np.isclose(np.sum(res.x), 1, atol=tolerance):
+            return False
+        return True
+
+    def correct(self, last_action, current_state, distribution: Distribution):
+
+        current_state_index = self.model_info.map_states(current_state)
+
+        if last_action is None:
+            # we are looking at a different trace now, so we need to update the values on the previous trace
+            if len(self.initial_node.successors) > 0:
+                self.back_propagate_values(self.current_node)
+            self.current_node = self.initial_node
+
+        succ_node = next((n for n in self.current_node.successors if n.state_in_mc == current_state_index and n.last_played_action == last_action), None)
+        if succ_node is None:
+            self.current_node.successors.append(Node([], self.current_node, last_action, [], current_state_index, self.model_info.vmin[current_state_index]))
+        self.current_node = next(n for n in self.current_node.successors if n.state_in_mc == current_state_index and n.last_played_action == last_action)
+
+        full_distribution = [0.0 for _ in range(len(self.model_info.model.get_choice(current_state_index).transition))]
+        for prob, action in distribution:
+            full_distribution[action] = prob
+
+        # check if current distribution is inside the convex set
+        if self.point_in_convex_hull(self.current_node.distributions + self.vmin_actions_distributions[current_state_index], full_distribution):
+            return distribution
+
+        self.current_node.distributions.append(full_distribution)
+
+        self.back_propagate_values(self.current_node)
+
+        if self.initial_node.value > self.nu:
+            self.current_node.distributions.pop()
+            return clamp_distribution(distribution, self.vmin_actions[current_state_index])
+
+        return distribution
 

@@ -11,7 +11,7 @@ except Exception:
         pass
 
 # Shielding/model imports
-from shielding.shield import sample_distribution, PessimisticShield, IdentityShield, PessimisticShield2
+from shielding.shield import sample_distribution, PessimisticShield, IdentityShield, PessimisticShield2, SelfConstructingShield
 from shielding.models import blackjack, cliffwalking
 
 # ------------- Utilities (unchanged) -------------
@@ -239,22 +239,26 @@ class EnvRunner:
 class ShieldingScene(Scene):
     def construct(self):
         # Initialize model and shield
-        model_info = cliffwalking()
-        shield = PessimisticShield(model_info, 0.5)
+        model_info = blackjack()
+        # shield = PessimisticShield(model_info, 0.5)
         # shield = IdentityShield(model_info)
+        shield = SelfConstructingShield(model_info, 0.05) 
 
         # Build drawer and runner
         drawer = ManimDrawer(self, theme_name="Monokai Pro Light")
-        runner = EnvRunner(model_info.env, shield, actions=[0, 1, 2, 3])
+        runner = EnvRunner(model_info.env, shield, actions=[0, 1])
 
         # Run N episodes with drawing enabled
-        runner.run(episodes=1, drawer=drawer, render=True, max_steps=None)
+        runner.run(episodes=10, drawer=drawer, render=True, max_steps=None)
 
-if __name__ == "__main__":
-    model_info = cliffwalking()
-    shield = PessimisticShield(model_info, 0.5)
-    runner = EnvRunner(model_info.env, shield, actions=[0, 1, 2, 3])
-    # Run headless logic (no Manim, no rendering)
-    number_bad = runner.run(episodes=100, drawer=NullDrawer(), render=False, max_steps=None)
-    print(number_bad, "/", 100)
+        shield.back_propagate_values(shield.current_node)
+        print(shield.initial_node)
+
+# if __name__ == "__main__":
+#     model_info = blackjack()
+#     shield = PessimisticShield(model_info, 0.5)
+#     runner = EnvRunner(model_info.env, shield, actions=[0, 1])
+#     # Run headless logic (no Manim, no rendering)
+#     number_bad = runner.run(episodes=10, drawer=NullDrawer(), render=False, max_steps=None)
+#     print(number_bad, "/", 10)
 

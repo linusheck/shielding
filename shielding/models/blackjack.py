@@ -89,7 +89,6 @@ def blackjack():
 
     tuples_to_states = {convert_state(blackjack.states[state].labels[0]): state for state in blackjack.states}
     actions = [blackjack.get_action_with_labels(frozenset(["stick"])), blackjack.get_action_with_labels(frozenset(["hit"]))]
-    print(actions)
 
     def map_states(full_state):
         if full_state[0] > 21:

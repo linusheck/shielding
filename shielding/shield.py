@@ -178,7 +178,7 @@ type DistributionFull = list[float]
 
 @dataclass
 class Node:
-    successors: "list[Node]"
+    successors: "dict[tuple[int, int], Node]"
     predecessor: "Node"
     last_played_action: int
     distributions: list[DistributionFull]
@@ -187,7 +187,7 @@ class Node:
 
     def number_of_tree_nodes(self) -> int:
         count = 1
-        for succ in self.successors:
+        for succ in self.successors.values():
             count += succ.number_of_tree_nodes()
         return count
 
@@ -202,7 +202,7 @@ class SelfConstructingShield(Shield):
         initial_state = 0
 
         # get vmin
-        self.initial_node = Node([], None, None, [], initial_state, self.model_info.vmin[initial_state])
+        self.initial_node = Node({}, None, None, [], initial_state, self.model_info.vmin[initial_state])
 
         self.current_node = self.initial_node
 
@@ -247,11 +247,10 @@ class SelfConstructingShield(Shield):
             if node.predecessor is None:
                 val = 0.0
                 for state, transition_prob in self.initial_distr.items():
-                    succ_node = next((n for n in node.successors if n.state_in_mc == state), None)
-                    if succ_node is not None:
-                        val += transition_prob * succ_node.value
-                    else:
+                    if (state, None) not in node.successors.keys():
                         val += transition_prob * self.model_info.vmin[state]
+                    else:
+                        val += transition_prob * node.successors[(state, None)].value
                 node.value = val
             # every other node
             else:
@@ -267,11 +266,10 @@ class SelfConstructingShield(Shield):
                             continue
                         branch = actions[self.model_info.map_actions(action_index)]
                         for (value, next_state) in branch:
-                            succ_node = next((n for n in node.successors if n.state_in_mc == next_state.id and n.last_played_action == action_index), None)
-                            if succ_node is not None:
-                                q_value += action_prob * value * succ_node.value
-                            else:
+                            if (next_state.id, action_index) not in node.successors.keys():
                                 q_value += action_prob * value * self.model_info.vmin[next_state.id]
+                            else:
+                                q_value += action_prob * value * node.successors[(next_state.id, action_index)].value
                     if q_value > best_value:
                         best_value = q_value
                 assert best_value != float('-inf')
@@ -306,12 +304,11 @@ class SelfConstructingShield(Shield):
                 self.back_propagate_values(self.current_node)
             self.current_node = self.initial_node
 
-        succ_node = next((n for n in self.current_node.successors if n.state_in_mc == current_state_index and n.last_played_action == last_action), None)
-        if succ_node is None:
-            self.current_node.successors.append(Node([], self.current_node, last_action, [], current_state_index, self.model_info.vmin[current_state_index]))
-            self.current_node = self.current_node.successors[-1]
+        if (current_state_index, last_action) not in self.current_node.successors.keys():
+            self.current_node.successors[(current_state_index, last_action)] = Node({}, self.current_node, last_action, [], current_state_index, self.model_info.vmin[current_state_index])
+            self.current_node = self.current_node.successors[(current_state_index, last_action)]
         else:
-            self.current_node = succ_node
+            self.current_node = self.current_node.successors[(current_state_index, last_action)]
 
         full_distribution = [0.0 for _ in range(len(self.model_info.model.get_choice(current_state_index).transition))]
         for prob, action in distribution:
@@ -347,11 +344,10 @@ class SelfConstructingShieldDistributions(SelfConstructingShield):
             if node.predecessor is None:
                 val = 0.0
                 for state, transition_prob in self.initial_distr.items():
-                    succ_node = next((n for n in node.successors if n.state_in_mc == state), None)
-                    if succ_node is not None:
-                        val += transition_prob * succ_node.value
-                    else:
+                    if (state, None) not in node.successors.keys():
                         val += transition_prob * self.model_info.vmin[state]
+                    else:
+                        val += transition_prob * node.successors[(state, None)].value
                 node.value = val
             # every other node
             else:
@@ -367,11 +363,10 @@ class SelfConstructingShieldDistributions(SelfConstructingShield):
                             continue
                         branch = actions[self.model_info.map_actions(action_index)]
                         for (value, next_state) in branch:
-                            succ_node = next((n for n in node.successors if n.state_in_mc == next_state.id and n.last_played_action == distr_index), None)
-                            if succ_node is not None:
-                                q_value += action_prob * value * succ_node.value
-                            else:
+                            if (next_state.id, distr_index) not in node.successors.keys():
                                 q_value += action_prob * value * self.model_info.vmin[next_state.id]
+                            else:
+                                q_value += action_prob * value * node.successors[(next_state.id, distr_index)].value
                     if q_value > best_value:
                         best_value = q_value
                 assert best_value != float('-inf')
@@ -390,14 +385,13 @@ class SelfConstructingShieldDistributions(SelfConstructingShield):
             self.current_node = self.initial_node
 
         # Change compared to parent class: last_played_action now stores the index of the played distribution
-        succ_node = next((n for n in self.current_node.successors if n.state_in_mc == current_state_index and n.last_played_action == self.last_distribution_index), None)
-        if succ_node is None:
+        if (current_state_index, self.last_distribution_index) not in self.current_node.successors.keys():
             all_dist = self.vmin_actions_distributions[self.current_node.state_in_mc] + self.current_node.distributions
             assert self.last_distribution_index is None and len(all_dist) == 0 or self.last_distribution_index < len(all_dist)
-            self.current_node.successors.append(Node([], self.current_node, self.last_distribution_index, [], current_state_index, self.model_info.vmin[current_state_index]))
-            self.current_node = self.current_node.successors[-1]
+            self.current_node.successors[(current_state_index, self.last_distribution_index)] = Node({}, self.current_node, self.last_distribution_index, [], current_state_index, self.model_info.vmin[current_state_index])
+            self.current_node = self.current_node.successors[(current_state_index, self.last_distribution_index)]
         else:
-            self.current_node = succ_node
+            self.current_node = self.current_node.successors[(current_state_index, self.last_distribution_index)]
 
         full_distribution = [0.0 for _ in range(len(self.model_info.model.get_choice(current_state_index).transition))]
         for prob, action in distribution:
